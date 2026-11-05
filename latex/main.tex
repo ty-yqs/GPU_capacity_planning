@@ -1,29 +1,63 @@
+% !TeX program = xelatex
+% Compile in this directory: latexmk -xelatex main.tex
 \documentclass[UTF8,a4paper,11pt,fontset=fandol]{ctexart}
-\usepackage[margin=2.25cm,headheight=14pt]{geometry}
-\usepackage{amsmath,amssymb,booktabs,tabularx,array,multirow}
-\usepackage{graphicx,pgfplots,xcolor,fancyhdr,hyperref}
+\usepackage[top=2.5cm,bottom=2.4cm,left=2.5cm,right=2.5cm,headheight=15pt]{geometry}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{newtxmath}
+\setmainfont{texgyretermes}[Extension=.otf,UprightFont=*-regular,
+ BoldFont=*-bold,ItalicFont=*-italic,BoldItalicFont=*-bolditalic]
+\setsansfont{texgyreheros}[Extension=.otf,UprightFont=*-regular,
+ BoldFont=*-bold,ItalicFont=*-italic,BoldItalicFont=*-bolditalic]
+\setmonofont{lmmono10-regular.otf}[Scale=MatchLowercase]
+\usepackage{graphicx,booktabs,tabularx,array,multirow,pgfplots}
+\usepackage{caption,float,placeins,enumitem,fancyhdr,microtype,xcolor}
+\usepackage[unicode,hidelinks]{hyperref}
 \usepgfplotslibrary{groupplots,statistics}
 \pgfplotsset{compat=1.18}
-\hypersetup{colorlinks=true,linkcolor=blue!50!black,urlcolor=blue!50!black}
-\setlength{\parindent}{2em}
-\setlength{\parskip}{0.15em}
+\hypersetup{pdftitle={GPU容量规划：复合随机负载、尾部风险与部署决策},
+ pdfauthor={颜千淞},bookmarksnumbered=true}
+\ctexset{section={format=\Large\bfseries,beforeskip=1.5em,afterskip=.8em},
+ subsection={format=\large\bfseries,beforeskip=1.2em,afterskip=.5em},
+ subsubsection={format=\normalsize\bfseries,beforeskip=.8em,afterskip=.3em}}
+\numberwithin{equation}{section}
+\captionsetup{font=small,labelfont=bf,labelsep=quad,skip=7pt}
+\captionsetup[table]{position=top}
 \renewcommand{\arraystretch}{1.15}
+\setlength{\tabcolsep}{5pt}
+\setlist{nosep,leftmargin=2em,topsep=5pt}
+\setlength{\emergencystretch}{2em}
+\renewcommand{\topfraction}{.92}
+\renewcommand{\bottomfraction}{.85}
+\renewcommand{\textfraction}{.06}
+\renewcommand{\floatpagefraction}{.82}
+\setcounter{topnumber}{4}
+\setcounter{bottomnumber}{3}
+\setcounter{totalnumber}{6}
+\linespread{1.16}
+\raggedbottom
+\setcounter{tocdepth}{2}
 \pagestyle{fancy}
 \fancyhf{}
-\fancyhead[L]{概率论与数理统计探究项目}
-\fancyhead[R]{GPU容量规划}
-\fancyfoot[C]{\thepage}
+\fancyhead[L]{\small GPU容量规划探究}
+\fancyhead[R]{\small 概率论与数理统计}
+\fancyfoot[C]{\small\thepage}
+\renewcommand{\headrulewidth}{.3pt}
+\fancypagestyle{plain}{\fancyhf{}\fancyfoot[C]{\small\thepage}\renewcommand{\headrulewidth}{0pt}}
 \newcommand{\gpu}{\,\mathrm{GPU\,s}}
 \newcommand{\pr}{\mathbb{P}}
-\title{GPU容量规划：复合随机负载、尾部风险与部署决策}
-\author{概率论与数理统计课程作业\quad 数据版本 A01}
-\date{2026年11月}
+\title{\bfseries GPU容量规划：\\[.3em]复合随机负载、尾部风险与部署决策}
+\author{颜千淞\quad SUAT25000446\\[.3em]\small 深圳理工大学}
+\date{\small 概率论与数理统计探究项目}
 
 \begin{document}
 \maketitle
 \begin{abstract}
 用14天分钟请求计数和5600条单请求GPU时间，估计工作日17:00--21:59一分钟总工作量的右尾。独立泊松计数和正态近似都低估尾部；保留文本、图像计数相关性的经验模拟给出当前最少\textbf{5块GPU}，60,000次模拟的超载率为\textbf{0.872\%}（蒙特卡洛95\%区间0.800\%--0.949\%）。考虑首周单独评估时5块未达标、有限服务时间样本及突发测试，建议\textbf{现在部署6块}；到达规模增加30\%时需\textbf{7块}；图像占比升至35\%时需\textbf{11块}，且应同时改进图像处理链路。本文给出模型检验、矩推导、压力测试和可复现算法。
+\par\vspace{.5em}\noindent\textbf{关键词：}GPU容量规划；复合泊松负载；经验分布；蒙特卡洛模拟；冷启动
 \end{abstract}
+\clearpage
+\tableofcontents
+\clearpage
 
 \section{问题、数据与分析口径}
 一块GPU每分钟理论容量为60 GPU秒；按80\%利用率规划，有效容量为48 GPU秒。令$N_T,N_I$分别为一分钟文本和图像请求数，$T_j,I_k$为独立请求的服务时间，总工作量为
@@ -147,6 +181,8 @@ B：图像占比35\%&316.66&520.43&10块：2.818\%&11块：0.805\%\\
 为观察时间变化，把10个工作日划分为前后各5日，分别用该周的成对分钟计数和同一服务时间样本模拟60,000次。首周5块的超载率为\textbf{1.182\%}（Wilson区间1.098\%--1.271\%），已超过目标；次周为0.563\%（0.507\%--0.626\%）。首周若配置6块，超载率降至0.108\%。这并非两周未来情景的置信区间，但说明把不同流量水平混合后得到的0.872\%会掩盖局部不达标，也是建议6块的直接证据。图像冷启动率4.875\%的Wilson 95\%区间为3.924\%--6.043\%，而冷启动后处理时间的极端尾部仅由78条记录支撑。
 
 复现：在\texttt{experiments/}目录运行\texttt{python3 analyze.py}（需NumPy、Pandas），生成结果JSON及图表数据；进入\texttt{latex/}后运行\texttt{latexmk -xelatex main.tex}。随机种子为20261105，主情景及各压力情景均模拟60,000次。
+
+\noindent 本项目开源地址：\url{https://github.com/ty-yqs/GPU_capacity_planning}。
 
 \clearpage
 \section*{决策备忘录（致计算服务平台负责人）}
