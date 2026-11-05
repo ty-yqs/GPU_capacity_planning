@@ -1,0 +1,29 @@
+\begin{tikzpicture}
+\begin{groupplot}[group style={group size=2 by 1,horizontal sep=1.1cm},width=.47\textwidth,height=6.0cm,
+xmin=.5,xmax=5.5,xtick={1,2,3,4,5},xticklabels={夜间,上午,日间,高峰,深夜},
+tick label style={font=\scriptsize},label style={font=\small},
+boxplot/draw direction=y,boxplot/box extend=.23,grid=major,grid style={gray!15}]
+\nextgroupplot[title={文本请求数},ylabel={次/分钟},ymin=0,ymax=160]
+\addplot+[boxplot prepared={draw position=0.84,lower whisker=0,lower quartile=7,median=9,upper quartile=12,upper whisker=19},fill=blue!40,draw=black!60] coordinates {};
+\addplot+[boxplot prepared={draw position=1.16,lower whisker=0,lower quartile=5,median=7,upper quartile=9,upper whisker=15},fill=orange!50,draw=black!60] coordinates {};
+\addplot+[boxplot prepared={draw position=1.84,lower whisker=28,lower quartile=47,median=54,upper quartile=61,upper whisker=82},fill=blue!40,draw=black!60] coordinates {};
+\addplot+[boxplot prepared={draw position=2.16,lower whisker=18,lower quartile=34,median=39,upper quartile=45,upper whisker=61},fill=orange!50,draw=black!60] coordinates {};
+\addplot+[boxplot prepared={draw position=2.84,lower whisker=32,lower quartile=54,median=61,upper quartile=69,upper whisker=91},fill=blue!40,draw=black!60] coordinates {};
+\addplot+[boxplot prepared={draw position=3.16,lower whisker=23,lower quartile=39,median=44,upper quartile=50,upper whisker=65},fill=orange!50,draw=black!60] coordinates {};
+\addplot+[boxplot prepared={draw position=3.84,lower whisker=47,lower quartile=80,median=92,upper quartile=105,upper whisker=142},fill=blue!40,draw=black!60] coordinates {};
+\addplot+[boxplot prepared={draw position=4.16,lower whisker=36,lower quartile=58,median=66,upper quartile=76,upper whisker=103},fill=orange!50,draw=black!60] coordinates {};
+\addplot+[boxplot prepared={draw position=4.84,lower whisker=12,lower quartile=23,median=28,upper quartile=32,upper whisker=45},fill=blue!40,draw=black!60] coordinates {};
+\addplot+[boxplot prepared={draw position=5.16,lower whisker=8,lower quartile=17,median=20,upper quartile=23,upper whisker=32},fill=orange!50,draw=black!60] coordinates {};
+\nextgroupplot[title={图像请求数},ylabel={次/分钟},ymin=0,ymax=20]
+\addplot+[boxplot prepared={draw position=0.84,lower whisker=0,lower quartile=0,median=0,upper quartile=1,upper whisker=2},fill=blue!40,draw=black!60] coordinates {};
+\addplot+[boxplot prepared={draw position=1.16,lower whisker=0,lower quartile=0,median=0,upper quartile=1,upper whisker=2},fill=orange!50,draw=black!60] coordinates {};
+\addplot+[boxplot prepared={draw position=1.84,lower whisker=0,lower quartile=2,median=4,upper quartile=5,upper whisker=9},fill=blue!40,draw=black!60] coordinates {};
+\addplot+[boxplot prepared={draw position=2.16,lower whisker=0,lower quartile=2,median=3,upper quartile=4,upper whisker=7},fill=orange!50,draw=black!60] coordinates {};
+\addplot+[boxplot prepared={draw position=2.84,lower whisker=0,lower quartile=3,median=4,upper quartile=6,upper whisker=10},fill=blue!40,draw=black!60] coordinates {};
+\addplot+[boxplot prepared={draw position=3.16,lower whisker=0,lower quartile=2,median=4,upper quartile=5,upper whisker=9},fill=orange!50,draw=black!60] coordinates {};
+\addplot+[boxplot prepared={draw position=3.84,lower whisker=0,lower quartile=6,median=8,upper quartile=10,upper whisker=16},fill=blue!40,draw=black!60] coordinates {};
+\addplot+[boxplot prepared={draw position=4.16,lower whisker=0,lower quartile=5,median=7,upper quartile=9,upper whisker=15},fill=orange!50,draw=black!60] coordinates {};
+\addplot+[boxplot prepared={draw position=4.84,lower whisker=0,lower quartile=1,median=2,upper quartile=3,upper whisker=6},fill=blue!40,draw=black!60] coordinates {};
+\addplot+[boxplot prepared={draw position=5.16,lower whisker=0,lower quartile=1,median=1,upper quartile=3,upper whisker=6},fill=orange!50,draw=black!60] coordinates {};
+\end{groupplot}
+\end{tikzpicture}

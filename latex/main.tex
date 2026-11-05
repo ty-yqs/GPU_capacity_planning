@@ -1,0 +1,174 @@
+\documentclass[UTF8,a4paper,11pt,fontset=fandol]{ctexart}
+\usepackage[margin=2.25cm,headheight=14pt]{geometry}
+\usepackage{amsmath,amssymb,booktabs,tabularx,array,multirow}
+\usepackage{graphicx,pgfplots,xcolor,fancyhdr,hyperref}
+\usepgfplotslibrary{groupplots,statistics}
+\pgfplotsset{compat=1.18}
+\hypersetup{colorlinks=true,linkcolor=blue!50!black,urlcolor=blue!50!black}
+\setlength{\parindent}{2em}
+\setlength{\parskip}{0.15em}
+\renewcommand{\arraystretch}{1.15}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{概率论与数理统计探究项目}
+\fancyhead[R]{GPU容量规划}
+\fancyfoot[C]{\thepage}
+\newcommand{\gpu}{\,\mathrm{GPU\,s}}
+\newcommand{\pr}{\mathbb{P}}
+\title{GPU容量规划：复合随机负载、尾部风险与部署决策}
+\author{概率论与数理统计课程作业\quad 数据版本 A01}
+\date{2026年11月}
+
+\begin{document}
+\maketitle
+\begin{abstract}
+用14天分钟请求计数和5600条单请求GPU时间，估计工作日17:00--21:59一分钟总工作量的右尾。独立泊松计数和正态近似都低估尾部；保留文本、图像计数相关性的经验模拟给出当前最少\textbf{5块GPU}，60,000次模拟的超载率为\textbf{0.872\%}（蒙特卡洛95\%区间0.800\%--0.949\%）。考虑首周单独评估时5块未达标、有限服务时间样本及突发测试，建议\textbf{现在部署6块}；到达规模增加30\%时需\textbf{7块}；图像占比升至35\%时需\textbf{11块}，且应同时改进图像处理链路。本文给出模型检验、矩推导、压力测试和可复现算法。
+\end{abstract}
+
+\section{问题、数据与分析口径}
+一块GPU每分钟理论容量为60 GPU秒；按80\%利用率规划，有效容量为48 GPU秒。令$N_T,N_I$分别为一分钟文本和图像请求数，$T_j,I_k$为独立请求的服务时间，总工作量为
+\begin{equation}
+W=\sum_{j=1}^{N_T}T_j+\sum_{k=1}^{N_I}I_k,\qquad
+m_{\min}=\min\{m\in\mathbb N:\pr(W>48m)\leq0.01\}.
+\label{eq:target}
+\end{equation}
+\texttt{request\_count.csv}共20,160个连续分钟，\texttt{service\_time.csv}含文本4000条、图像1600条。两表均为A01版本；逐行核查有$N_T+N_I=N_{\rm total}$，字段无缺失。按题目定义筛选\texttt{day\_type=weekday, period=peak}，得到10个工作日、每天300分钟，共3000个高峰分钟。服务时间样本没有与分钟计数相连的时间戳，因此以下把其视为高峰服务时间的代表性样本；这一假设须通过上线监测核实。
+
+目标只定义在工作日高峰，故\emph{配置计算}可聚焦这3000分钟；但不能忽略其他时段：它们可检验时段差异、发现高峰标签错误或新的非高峰风险。图\ref{fig:boxes}显示高峰请求数显著高于其他时段，周末也较低。
+
+\begin{figure}[htbp]
+\centering
+\input{fig_data/boxes.tex}
+\caption{按时段和日类型绘制的请求数箱线图。每组左侧蓝色为工作日，右侧橙色为周末。箱体为$Q_1$至$Q_3$、中线为中位数；须按1.5倍四分位距确定的须，离群点省略以保持可读性。}
+\label{fig:boxes}
+\end{figure}
+
+\section{请求数量：泊松模型与诊断}
+在工作日高峰，先拟合$N_T\sim\operatorname{Pois}(\lambda_T)$、$N_I\sim\operatorname{Pois}(\lambda_I)$。泊松极大似然估计为样本均值。由于相邻分钟可能相关、每日水平不同，95\%区间以\emph{天}为独立块：对10个每日高峰均值使用自由度9的$t$区间。该区间比把3000分钟都视为独立的泊松区间更适合本数据；但仅有10天，长期漂移仍未纳入。
+
+\begin{table}[htbp]\centering
+\caption{工作日高峰计数的估计和泊松诊断（单位：次/分钟）}
+\begin{tabular}{lrrrrr}\toprule
+类型&样本均值 $\hat\lambda$&95\%日块区间&样本标准差&方差/均值&99\%分位数\\\midrule
+文本&93.304&[88.746,97.861]&17.560&3.305&139\\
+图像&8.263&[7.822,8.703]&3.258&1.284&17\\
+总数&101.566&--&18.957&3.538&151.01\\\bottomrule
+\end{tabular}
+\label{tab:counts}
+\end{table}
+
+用$D=s_N^2/\bar N$检验泊松假设：在每类各自拟合的$\hat\lambda$下，分别模拟2000组长度3000的独立泊松样本，计算$D$。两类的模拟值均无一次达到观测值，因此参数自助法单侧$p$值均小于$1/2001\approx0.0005$。文本尤其明显地过度离散；图像也不符合独立同分布泊松。此检验针对\emph{独立、同质}泊松的联合假设，日内变化及串行相关均可导致拒绝。逐日均值在首周和次周下降，文本分别为97.45与89.16，说明单一固定到达率并不充分。
+
+两类计数的样本相关系数为$r=0.353$，协方差为20.207次$^2$/分钟$^2$。它支持共同流量冲击的可能性，但聚合分钟数据不足以判定是否由同一个多模态请求造成。后续主模型\emph{成对重抽}实测分钟$(N_T,N_I)$，保留各自过度离散及同期相关性。其支持集限于所见流量，因此另作突发敏感性测试。
+
+\section{单请求GPU时间与冷启动}
+对每一类型使用完整的经验服务时间分布：模拟每个请求时，在该类型样本中有放回抽取一条GPU秒数。这样保留偏态和已观测冷启动，而不强制套用对数正态等单一参数族。图\ref{fig:service}为等宽组距的密度直方图；图窗之外的极端值仍留在计算中。
+
+\begin{figure}[htbp]\centering
+\begin{tikzpicture}
+\begin{groupplot}[group style={group size=2 by 1,horizontal sep=1.2cm},width=.46\textwidth,height=5.5cm,grid=major,grid style={gray!15},tick label style={font=\scriptsize},label style={font=\small},ylabel={概率密度}]
+\nextgroupplot[title={文本请求},xlabel={GPU秒},xmin=0,xmax=6,ymin=0,ybar,bar width=0.245]
+\addplot+[fill=blue!45,draw=blue!70!black] table[x=x,y=y]{fig_data/text_hist.dat};
+\nextgroupplot[title={图像请求},xlabel={GPU秒},xmin=0,xmax=40,ymin=0,ybar,bar width=1.95]
+\addplot+[fill=orange!55,draw=orange!75!black] table[x=x,y=y]{fig_data/image_hist.dat};
+\end{groupplot}
+\end{tikzpicture}
+\caption{服务时间的经验密度；文本图仅展示0--6秒，图像图仅展示0--40秒。全样本最大值分别为10.918和79.419秒，均参与模型和模拟。}
+\label{fig:service}
+\end{figure}
+
+\begin{table}[htbp]\centering
+\caption{单请求服务时间统计（时间单位：GPU秒；方差和二阶矩单位：GPU秒$^2$）}
+\begin{tabular}{lrrrrrrrr}\toprule
+类型&$n$&均值$\hat\mu$&标准差&中位数&$Q_{.95}$&$Q_{.99}$&方差$\hat\sigma^2$&$\widehat{E(S^2)}$\\\midrule
+文本&4000&0.7621&0.6285&0.6337&1.4643&3.5281&0.3950&0.9758\\
+图像&1600&7.4761&6.2477&5.9163&17.5297&29.7495&39.0344&94.9024\\\bottomrule
+\end{tabular}
+\label{tab:service}
+\end{table}
+
+记$C=1$为冷启动。全概率公式为$E(S)=(1-p_C)E(S\mid C=0)+p_CE(S\mid C=1)$。文本冷启动98/4000，$\hat p_C=2.450\%$，热启动、冷启动均值分别0.6884和3.6992秒；两项对总体均值的贡献为0.6715和0.0906秒。图像冷启动78/1600，$\hat p_C=4.875\%$，两组均值为6.6541和23.5168秒；贡献为6.3297和1.1464秒。冷启动虽罕见，却占文本、图像$E(S^2)$样本总和的42.5\%和39.7\%；各自最高1\%服务时间中分别有40/40、15/16条为冷启动。因而其对右尾的影响远大于事件频率。
+
+\section{一分钟总负载的矩与相关性}
+若服务时间在给定计数后相互独立，并与计数独立，则
+\begin{align}
+E(W)&=\lambda_T\mu_T+\lambda_I\mu_I,\label{eq:mean}\\
+\operatorname{Var}(W)&=E(N_T)\sigma_T^2+\operatorname{Var}(N_T)\mu_T^2
+ +E(N_I)\sigma_I^2+\operatorname{Var}(N_I)\mu_I^2
+ +2\mu_T\mu_I\operatorname{Cov}(N_T,N_I).\label{eq:var}
+\end{align}
+若计数\emph{独立泊松}，最后一项为0，且每类方差等于$\lambda E(S^2)$。代入得到$E(W)=132.884$ GPU秒、标准差29.587 GPU秒。平均负载中文本占71.111（53.5\%），图像占61.773（46.5\%）；泊松方差中文本占91.053（10.4\%），图像占784.349（89.6\%）。
+
+独立性不成立时，式\eqref{eq:mean}在计数与单请求服务时间独立的前提下\emph{仍成立}，但忽略协方差的方差估计失效。把观测计数方差308.349、10.613和协方差20.207代入式\eqref{eq:var}，文本方差为215.966，图像方差为915.726，协方差项为230.279，总方差1361.971，标准差\textbf{36.905} GPU秒，比独立泊松估计高24.7\%。仅图像服务时间随机性一项$E(N_I)\sigma_I^2\approx322.5$；图像计数波动一项$\operatorname{Var}(N_I)\mu_I^2\approx593.2$。因此到达波动、图像处理时间与两类协同冲击都不可省略。
+
+\section{正态近似与蒙特卡洛检验}
+先依题目以独立泊松复合和为基准，用中心极限定理写$W\dot\sim N(132.884,29.587^2)$，于是
+\begin{equation}
+\pr(W>48m)\approx1-\Phi\!\left(\frac{48m-132.884}{29.587}\right).
+\end{equation}
+表\ref{tab:normal}显示近似首次在$m=5$达到1\%目标。每分钟约93个文本请求，利于均值附近的正态近似；但图像请求平均仅8.26个，且图像及冷启动处理时间右偏、长尾，服务目标恰在右尾。其准确性不能从样本量直接保证。
+
+\begin{table}[htbp]\centering
+\caption{不同模型的一分钟超载概率；模拟均为60,000次}
+\begin{tabular}{lrrr}\toprule
+模型&$m=4$（192秒）&$m=5$（240秒）&$m=6$（288秒）\\\midrule
+独立泊松+正态近似&2.286\%&0.0147\%&$0.0000079\%$\\
+独立泊松计数+经验服务时间模拟&3.762\%&0.340\%&0.0183\%\\
+成对实测计数+经验服务时间模拟&6.865\%&0.872\%&0.0783\%\\\bottomrule
+\end{tabular}
+\label{tab:normal}
+\end{table}
+
+模拟算法如下：每次从3000个高峰分钟中等概率抽取\emph{一对}$(N_T,N_I)$；分别从4000条文本和1600条图像服务时间中有放回抽取$N_T,N_I$次，求和得到$W$；对$m=4,5,6,\ldots$记录$\mathbf1\{W>48m\}$。固定随机种子20261105，共60,000次，以小批量运行。泊松对照只把成对计数替换为两个独立泊松抽样。
+
+主模拟工作量均值132.98、标准差36.84、99\%分位数236.28 GPU秒。$m=5$时523/60,000次超载，$\hat p=0.8717\%$，Wilson二项95\%蒙特卡洛区间为$[0.8004\%,0.9493\%]$；$m=4$为4119/60,000次，明显不合格。因此在\emph{经验模型和此次模拟精度下}，当前最少配置是\textbf{5块}，并且正态近似得到的整数结论通过模拟检验。尽管整数相同，正态近似的$m=5$风险仅0.0147\%，比经验模拟小约59倍。Wilson区间只度量模拟误差，不覆盖参数估计、未出现的服务时间长尾或未来流量变化。
+
+\section{压力测试与运营余量}
+情景A保持单请求经验服务时间不变，以实测成对计数为基准，给两类分别叠加泊松增量，其条件均值为$0.3N_T$与$0.3N_I$。这使两类到达\emph{平均}均增加30\%，且保留原有共享冲击。情景B保持实测总请求数$N=N_T+N_I$的分布，条件于$N$抽$N_I'\sim\operatorname{Bin}(N,0.35)$，并置$N_T'=N-N_I'$。另为检验未观测突发风险，自定义敏感性情景：5\%分钟的两类到达各额外增加条件均值为原计数50\%的泊松请求。这不是数据中估计的突发概率，只是压力设定。
+
+\begin{table}[htbp]\centering
+\small\setlength{\tabcolsep}{4pt}
+\caption{压力情景的经验模拟结果（每情景60,000次）}
+\begin{tabular}{lrrrr}\toprule
+情景&平均工作量&$W$的99\%分位数&临界前一档超载率&最少GPU及其超载率\\\midrule
+当前高峰&132.98&236.28&4块：6.865\%&5块：0.872\%\\
+A：两类到达均增长30\%&172.50&306.12&6块：1.943\%&7块：0.317\%\\
+B：图像占比35\%&316.66&520.43&10块：2.818\%&11块：0.805\%\\
+突发敏感性&136.46&262.63&5块：2.043\%&6块：0.470\%\\\bottomrule
+\end{tabular}
+\label{tab:stress}
+\end{table}
+
+图像占比从8.14\%升至35\%时，即使总请求数不变，平均工作量仍从约133增至317 GPU秒。单纯加GPU可满足容量不等式，但从5块跳到11块代价很高；应衡量图像模型压缩、批处理、分级路由和预热能否减少单次GPU秒数，再按实测收益重新规划。当前建议配置6块：5块在基准模型下距1\%仅约0.13个百分点，在人为突发情景中已失效。30\%增长目标配置为7块，应在增长发生前扩容。
+
+\section{不确定性、监测与复现}
+本结论的主要假设是：(1)未来工作日高峰与这10天可比；(2)服务时间样本代表高峰，且各请求服务时间给定类型后近似独立于到达量；(3)GPU可跨请求共享容量，48秒/分钟的有效容量能代表排队时延约束；(4)经验抽样可覆盖当前右尾。最大数据缺口是\emph{按时间联结的请求类型、服务时间和冷启动记录}：它可直接检验高峰时是否更慢、拥堵时是否产生更多冷启动，以及多模态请求是否同步冲击两类队列。只有10个工作日和78个图像冷启动样本，尾部外推应谨慎；计数序列还呈现周际水平变化。建议按日块重估模型，持续用实测分钟总GPU秒回测阈值，而非只监测平均QPS。
+
+为观察时间变化，把10个工作日划分为前后各5日，分别用该周的成对分钟计数和同一服务时间样本模拟60,000次。首周5块的超载率为\textbf{1.182\%}（Wilson区间1.098\%--1.271\%），已超过目标；次周为0.563\%（0.507\%--0.626\%）。首周若配置6块，超载率降至0.108\%。这并非两周未来情景的置信区间，但说明把不同流量水平混合后得到的0.872\%会掩盖局部不达标，也是建议6块的直接证据。图像冷启动率4.875\%的Wilson 95\%区间为3.924\%--6.043\%，而冷启动后处理时间的极端尾部仅由78条记录支撑。
+
+复现：在\texttt{experiments/}目录运行\texttt{python3 analyze.py}（需NumPy、Pandas），生成结果JSON及图表数据；进入\texttt{latex/}后运行\texttt{latexmk -xelatex main.tex}。随机种子为20261105，主情景及各压力情景均模拟60,000次。
+
+\clearpage
+\section*{决策备忘录（致计算服务平台负责人）}
+\thispagestyle{fancy}
+\noindent\textbf{主题：AI服务GPU部署与扩容阈值}\hfill\textbf{数据：A01，10个工作日高峰}
+
+\medskip
+\noindent\textbf{立即决策。}当前1\%一分钟超载目标下，汇总经验模拟的\emph{最少}配置为\textbf{5块}，估计超载率0.872\%，蒙特卡洛95\%区间0.800\%--0.949\%。建议\textbf{实际部署6块}，有效总容量288 GPU秒/分钟；在当前模型下其超载率为0.078\%，在“5\%分钟增加50\%到达”的压力设定下为0.470\%。首周单独模拟时5块的超载率为1.182\%，且经验样本不能描述未见的极端冷启动。
+
+\medskip
+\noindent\textbf{三个月计划。}若文本和图像到达规模均增长30\%，需至少\textbf{7块}：6块的模拟超载率1.943\%，7块为0.317\%。在出现此增幅前部署第7块，并每周以最新高峰数据复算。
+
+\medskip
+\noindent\textbf{图像流量结构。}若总请求数不变、图像占比升至35\%，需\textbf{11块}，10块仍有2.818\%超载率。增加GPU在数学上可达标，但应并行试验图像请求预热、批处理、模型压缩与分级路由；以实际GPU秒下降量决定是否可少部署硬件。不要用总请求数不变来推断容量也不变。
+
+\medskip
+\noindent\textbf{主要风险。}平均负载约133 GPU秒；图像请求仅占8.14\%，却占平均工作量46.5\%、独立泊松方差89.6\%。到达过度离散与文本、图像同步冲击将总负载标准差从29.59推到36.90 GPU秒；冷启动虽少，却高度集中在最慢的1\%请求中。故主要尾部风险是\emph{图像服务时间与到达波动共同作用}，冷启动是其中的重要放大器。
+
+\medskip
+\noindent\textbf{监测和触发。}每分钟记录两类到达数、总GPU秒、队列等待时间及超载标志；每日汇总工作日高峰99\%分位数、图像占比、服务时间95/99\%分位数、冷启动率。用最近5个工作日的高峰分钟做预警：部署6块时，若实测$W$的99\%分位数超过\textbf{259 GPU秒}（6块有效容量的90\%），或超载频率超过\textbf{0.5\%}，立即重新模拟并启动扩容评审；若图像占比超过\textbf{15\%}，同步评审图像链路。以上是运营预警值，不是题目规定的1\%硬性服务目标。
+
+\medskip
+\noindent\textbf{最应补充的数据。}采集分钟级到达与逐请求GPU时间、冷启动、模型版本的关联记录，优先验证“高峰时服务时间分布仍与本样本相同”这一关键假设；同时累积更多工作日和图像冷启动样本。
+
+\end{document}
